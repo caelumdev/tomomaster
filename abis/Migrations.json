@@ -1375,7 +1375,7 @@
     "version": "0.4.24+commit.e67f0147.Emscripten.clang"
   },
   "networks": {
-    "89": {
+    "18154": {
       "events": {},
       "links": {},
       "address": "0xc44ac3e7ea0f6471da752886209c76c4ebffd1fb",

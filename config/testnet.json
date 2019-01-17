@@ -2,7 +2,7 @@
     "blockchain": {
         "rpc": "http://178.128.254.255:8515",
         "ws": "http://178.128.254.255:8546",
-        "networkId": 89
+        "networkId": 18154
     },
     "explorerUrl": "https://scan.testnet.tomochain.com",
     "tomoscanUrl": "http://tomoscan_server:3333",

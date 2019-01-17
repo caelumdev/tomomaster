@@ -5,7 +5,7 @@
     "blockchain": {
         "rpc": "https://rpc.tomochain.com",
         "ws": "wss://ws.tomochain.com",
-        "networkId": 88
+        "networkId": 18154
     },
     "explorerUrl": "https://scan.tomochain.com",
     "tomoscanUrl": "http://tomoscan_server:3333",

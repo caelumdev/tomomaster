@@ -5,7 +5,7 @@
     "blockchain": {
         "rpc": "http://blockchain-proxy:8545",
         "ws": "ws://blockchain-proxy:8546",
-        "networkId": 88
+        "networkId": 18154
     },
     "db": {
         "uri" : "mongodb://tomomaster_db:27017/governance"
