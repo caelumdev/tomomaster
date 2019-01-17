@@ -348,8 +348,8 @@ export default {
             chainConfig: {},
             networks: {
                 // mainnet: 'https://core.tomochain.com',
-                rpc: 'https://testnet.tomochain.com',
-                tomowallet: 'https://testnet.tomochain.com'
+                rpc: 'http://178.128.254.255:8515',
+                tomowallet: 'http://178.128.254.255:8515'
             },
             loading: false,
             qrCode: 'text',
