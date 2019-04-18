@@ -20,6 +20,7 @@
                             <b-form-select
                                 id="provider"
                                 v-model="provider"
+                                class="form-control"
                                 @change="onChangeSelect">
                                 <option
                                     value="tomowallet">TomoWallet (Recommended)</option>
@@ -31,7 +32,7 @@
                                     value="trezor">Trezor Wallet</option>
                                 <option
                                     v-if="!isElectron"
-                                    value="metamask">Metamask/TrustWallet</option>
+                                    value="metamask">Metamask/TrustWallet/MidasWallet</option>
                             </b-form-select>
                             <small
                                 v-if="provider !== 'metamask'"
@@ -119,6 +120,13 @@
                         <span
                             v-if="$v.hdPath.$dirty && !$v.hdPath.required"
                             class="text-danger">Required field</span>
+                        <small
+                            class="form-text text-muted">To unlock the wallet, try paths
+                            <code>m/44'/60'/0'</code>
+                            or <code>m/44'/60'/0'/0</code>
+                            with Ethereum App,<br>
+                            or try path <code>m/44'/889'/0'/0</code>
+                            with TomoChain App (on Ledger).</small>
                     </b-form-group>
 
                     <b-form-group
@@ -142,7 +150,7 @@
                         v-if="!isReady && provider === 'metamask'">
                         <p>Please install &amp; login
                             <a
-                                href="http://bitly.com/2gmvrGG"
+                                href="https://metamask.io/"
                                 target="_blank">Metamask Extension</a>
                             then connect it to Tomochain Mainnet or Testnet.</p>
                     </div>
@@ -214,10 +222,13 @@
                             :disabled="w.blockNumber > chainConfig.blockNumber"
                             variant="primary"
                             @click="withdraw(w.blockNumber, k)">Withdraw</b-button> -->
-                        <b-button
-                            :disabled="w.blockNumber > chainConfig.blockNumber"
-                            variant="primary"
-                            @click="changeView(w, k)">Withdraw</b-button>
+                        <div class="tomo-list__text">
+                            <b-button
+                                :disabled="w.blockNumber > chainConfig.blockNumber"
+                                class="float-right"
+                                variant="primary"
+                                @click="changeView(w, k)">Withdraw</b-button>
+                        </div>
                     </li>
                 </ul>
                 <ul
@@ -236,6 +247,7 @@
                             <span class="text-muted">{{ getCurrencySymbol() }}</span></p>
                             <span>Capacity</span>
                         </div>
+                        <p class="tomo-list__text"/>
                     </li>
                 </ul>
             </b-card>
@@ -355,7 +367,8 @@ export default {
             qrCode: 'text',
             id: '',
             interval: '',
-            qrCodeApp: ''
+            qrCodeApp: '',
+            gasPrice: null
         }
     },
     validations: {
@@ -406,6 +419,7 @@ export default {
                 if (self.web3) {
                     try {
                         contract = await self.getTomoValidatorInstance()
+                        self.gasPrice = await self.web3.eth.getGasPrice()
                     } catch (error) {
                         throw Error('Make sure you choose correct tomochain network.')
                     }
@@ -660,16 +674,6 @@ export default {
                 }
                 break
             }
-            // if (event === 'tomowallet') {
-            //     await this.loginByQRCode()
-            //     this.interval = setInterval(async () => {
-            //         await this.getLoginResult()
-            //     }, 3000)
-            // } else {
-            //     if (this.interval) {
-            //         clearInterval(this.interval)
-            //     }
-            // }
         },
         async getAccountInfo (account) {
             const self = this
@@ -739,7 +743,7 @@ export default {
             }
         },
         changeView (w, k) {
-            const txFee = new BigNumber(this.chainConfig.gas * this.chainConfig.gasPrice).div(10 ** 18)
+            const txFee = new BigNumber(this.chainConfig.gas * this.gasPrice).div(10 ** 18)
 
             if (this.balance.isGreaterThanOrEqualTo(txFee)) {
                 this.$router.push({ name: 'CandidateWithdraw',

@@ -41,44 +41,81 @@
             </div>
         </div>
 
-        <div
-            v-if="candidates.length <= 0"
-            class="tomo-loading"/>
-
-        <div
-            v-else
-            class="container">
+        <div class="container">
             <div class="row">
                 <div class="col-12">
-                    <h3 class="section-title">
-                        <i class="tm-flag color-yellow" />
-                        <span>Candidates ({{ totalRows }})</span>
+                    <h3 class="section-title--masternodes">
+                        <div class="masternode-bar">
+                            <i class="tm-flag color-yellow" />
+                            <span>Candidates</span>
+                            <span class="text-truncate section-title__description">
+                                <a
+                                    v-if="activeCandidates !== 0"
+                                    :class="currentTable === 'masternodes' ? 'tab-active' : ''"
+                                    @click="changeTable('masternodes')">Masternodes ({{ activeCandidates }})</a>
+                                <span v-if="slashedMN !== 0">|</span>
+                                <a
+                                    v-if="slashedMN !== 0"
+                                    :class="currentTable === 'slashed' ? 'tab-active' : ''"
+                                    @click="changeTable('slashed')">Slashed MNs ({{ slashedMN }})</a>
+                                <span v-if="totalProposedNodes !== 0">|</span>
+                                <a
+                                    v-if="totalProposedNodes !== 0"
+                                    :class="currentTable === 'proposed' ? 'tab-active' : ''"
+                                    @click="changeTable('proposed')">Proposed Nodes ({{ totalProposedNodes }})</a>
+                                <span v-if="resignedMN !== 0">|</span>
+                                <a
+                                    v-if="resignedMN !== 0"
+                                    :class="currentTable === 'resigned' ? 'tab-active' : ''"
+                                    @click="changeTable('resigned')">Resigned Nodes ({{ resignedMN }})</a>
+                            </span>
+                        </div>
                     </h3>
                 </div>
             </div>
+        </div>
+
+        <div
+            v-if="candidates.length <= 0"
+            class="tomo-loading"/>
+        <div
+            v-else
+            class="container">
             <b-table
-                :items="sortedCandidates"
+                :items="candidates"
                 :fields="fields"
-                :current-page="currentPage"
                 :per-page="perPage"
-                :sort-by.sync="sortBy"
-                :sort-desc.sync="sortDesc"
                 :class="'tomo-table tomo-table--candidates ' + tableCssClass"
                 empty-text="There are no candidates to show"
-                stacked="md" >
+                stacked="lg"
+                @sort-changed="sortingChange" >
 
                 <template
                     slot="address"
                     slot-scope="data">
                     <router-link
-                        :to="'/candidate/' + data.item.address"
-                        class="text-truncate">
-                        {{ data.item.address }}
+                        :to="'/candidate/' + data.item.address">
+                        {{ truncate(data.item.address, 18) }}
                     </router-link>
                 </template>
 
                 <template
-                    slot="cap"
+                    slot="name"
+                    slot-scope="data">
+                    <div
+                        :id="`name_${data.index}`"
+                        class="text-truncate">
+                        {{ data.item.name }}
+                    </div>
+                    <b-tooltip
+                        v-if="data.item.name.length > 20"
+                        :target="`name_${data.index}`">
+                        {{ data.item.name }}
+                    </b-tooltip>
+                </template>
+
+                <template
+                    slot="capacity"
                     slot-scope="data">{{ formatCurrencySymbol(formatBigNumber(data.item.cap, 2)) }}
                 </template>
 
@@ -117,7 +154,6 @@
                         @click="onRowClick(data.item.address)">Vote</b-button>
                 </template>
             </b-table>
-
             <b-pagination
                 v-if="totalRows > 0 && totalRows > perPage"
                 :total-rows="totalRows"
@@ -142,6 +178,10 @@ export default {
             chainConfig: {},
             fields: [
                 {
+                    key: 'rank',
+                    label: 'Rank'
+                },
+                {
                     key: 'address',
                     label: 'Address',
                     sortable: false
@@ -152,7 +192,7 @@ export default {
                     sortable: true
                 },
                 {
-                    key: 'cap',
+                    key: 'capacity',
                     label: 'Capacity',
                     sortable: true
                 },
@@ -172,13 +212,12 @@ export default {
                     sortable: false
                 }
             ],
-            sortBy: 'cap',
+            sortBy: 'capacity',
             sortDesc: true,
             isReady: false,
             account: '',
             voteActive: false,
             voteValue: 1,
-            voteItem: {},
             candidates: [],
             currentPage: this.$store.state.currentPage || 1,
             perPage: 50,
@@ -187,21 +226,16 @@ export default {
             loading: false,
             hasProposed: false,
             hasResigned: false,
-            isTomonet: false
+            isTomonet: false,
+            activeCandidates: 0,
+            resignedMN: 0,
+            slashedMN: 0,
+            totalProposedNodes: 0,
+            currentTable: 'masternodes'
         }
     },
-    computed: {
-        sortedCandidates: function () {
-            return this.candidates.slice().sort(function (a, b) {
-                return b.cap - a.cap
-            })
-        }
-    },
-    watch: {
-        currentPage: function (val) {
-            this.currentPage = this.$store.state.currentPage
-        }
-    },
+    computed: {},
+    watch: {},
     updated () {},
     created: async function () {
         let self = this
@@ -227,32 +261,7 @@ export default {
         } catch (error) {
             console.log(error)
         }
-
-        try {
-            self.loading = true
-
-            let candidates = await axios.get('/api/candidates')
-            candidates.data.map(async (candidate, index) => {
-                self.candidates.push({
-                    address: candidate.candidate,
-                    owner: candidate.owner.toLowerCase(),
-                    status: candidate.status,
-                    isMasternode: candidate.isMasternode,
-                    isPenalty: candidate.isPenalty,
-                    name: candidate.name || 'Anonymous',
-                    cap: new BigNumber(candidate.capacity).div(10 ** 18).toNumber(),
-                    latestSignedBlock: candidate.latestSignedBlock
-                })
-            })
-
-            self.totalRows = self.candidates.filter(c => c.status !== 'RESIGNED').length
-
-            self.loading = false
-            self.getTableCssClass()
-        } catch (e) {
-            self.loading = false
-            console.log(e)
-        }
+        self.getDataFromApi()
     },
     mounted () { },
     methods: {
@@ -296,14 +305,14 @@ export default {
         getColor (latestSignedBlock, currentBlock) {
             let result
             switch (true) {
-            case latestSignedBlock >= (currentBlock - 20):
+            case latestSignedBlock >= (currentBlock - 100):
                 result = 'cyan'
                 break
-            case latestSignedBlock < (currentBlock - 20) &&
-                latestSignedBlock >= (currentBlock - 100):
+            case latestSignedBlock < (currentBlock - 100) &&
+                latestSignedBlock >= (currentBlock - 200):
                 result = 'yellow'
                 break
-            case latestSignedBlock < (currentBlock - 100):
+            case latestSignedBlock < (currentBlock - 200):
                 result = 'pink'
                 break
             default:
@@ -311,9 +320,198 @@ export default {
             }
             return result
         },
+        async getDataFromApi () {
+            const self = this
+            try {
+                self.loading = true
+                const params = {
+                    page: self.currentPage,
+                    limit: self.perPage,
+                    sortBy: self.sortBy,
+                    sortDesc: self.sortDesc
+                }
+                const query = self.serializeQuery(params)
+
+                let candidates = await axios.get('/api/candidates/masternodes' + '?' + query)
+                let items = []
+
+                candidates.data.items.map(async (candidate, index) => {
+                    items.push({
+                        address: candidate.candidate,
+                        owner: candidate.owner.toLowerCase(),
+                        status: candidate.status,
+                        isMasternode: candidate.isMasternode,
+                        isPenalty: candidate.isPenalty,
+                        name: candidate.name || 'Anonymous',
+                        cap: new BigNumber(candidate.capacity).div(10 ** 18).toNumber(),
+                        latestSignedBlock: candidate.latestSignedBlock,
+                        rank: candidate.rank
+                    })
+                })
+                self.candidates = items
+
+                self.activeCandidates = candidates.data.activeCandidates
+                self.totalRows = candidates.data.activeCandidates
+                self.resignedMN = candidates.data.totalResigned
+                self.totalProposedNodes = candidates.data.totalProposed
+                self.slashedMN = candidates.data.totalSlashed
+
+                self.loading = false
+                self.getTableCssClass()
+            } catch (e) {
+                self.loading = false
+                console.log(e)
+            }
+        },
         pageChange (page) {
             this.$store.state.currentPage = page
+            this.currentPage = page
+            this.loadDataTables(this.currentTable)
             window.scrollTo(0, 320)
+        },
+        sortingChange (obj) {
+            this.sortBy = obj.sortBy
+            this.sortDesc = obj.sortDesc
+            this.loadDataTables(this.currentTable)
+        },
+        async getSlashedMNs () {
+            const self = this
+            try {
+                self.loading = true
+                const params = {
+                    page: self.currentPage,
+                    limit: self.perPage,
+                    sortBy: self.sortBy,
+                    sortDesc: self.sortDesc
+                }
+                const query = self.serializeQuery(params)
+
+                let candidates = await axios.get('/api/candidates/slashedMNs' + '?' + query)
+                let items = []
+                candidates.data.items.map(async (candidate, index) => {
+                    items.push({
+                        address: candidate.candidate,
+                        owner: candidate.owner.toLowerCase(),
+                        status: candidate.status,
+                        isMasternode: candidate.isMasternode,
+                        isPenalty: candidate.isPenalty,
+                        name: candidate.name || 'Anonymous',
+                        cap: new BigNumber(candidate.capacity).div(10 ** 18).toNumber(),
+                        latestSignedBlock: candidate.latestSignedBlock
+                    })
+                })
+                self.candidates = items
+
+                self.totalRows = candidates.data.total
+
+                self.loading = false
+                self.getTableCssClass()
+            } catch (e) {
+                self.loading = false
+                console.log(e)
+            }
+        },
+        async getProposedMNs () {
+            const self = this
+            try {
+                self.loading = true
+
+                const params = {
+                    page: self.currentPage,
+                    limit: self.perPage,
+                    sortBy: self.sortBy,
+                    sortDesc: self.sortDesc
+                }
+                const query = self.serializeQuery(params)
+
+                let candidates = await axios.get('/api/candidates/proposedMNs' + '?' + query)
+                let items = []
+                candidates.data.items.map(async (candidate, index) => {
+                    items.push({
+                        address: candidate.candidate,
+                        owner: candidate.owner.toLowerCase(),
+                        status: candidate.status,
+                        isMasternode: candidate.isMasternode,
+                        isPenalty: candidate.isPenalty,
+                        name: candidate.name || 'Anonymous',
+                        cap: new BigNumber(candidate.capacity).div(10 ** 18).toNumber(),
+                        latestSignedBlock: candidate.latestSignedBlock
+                    })
+                })
+                self.candidates = items
+
+                self.totalRows = candidates.data.total
+
+                self.loading = false
+                self.getTableCssClass()
+            } catch (e) {
+                self.loading = false
+                console.log(e)
+            }
+        },
+        async getResignedMNs () {
+            const self = this
+            try {
+                self.loading = true
+                const params = {
+                    page: self.currentPage,
+                    limit: self.perPage,
+                    sortBy: self.sortBy,
+                    sortDesc: self.sortDesc
+                }
+                const query = self.serializeQuery(params)
+
+                let candidates = await axios.get('/api/candidates/resignedMNs' + '?' + query)
+                let items = []
+                candidates.data.items.map(async (candidate, index) => {
+                    items.push({
+                        address: candidate.candidate,
+                        owner: candidate.owner.toLowerCase(),
+                        status: candidate.status,
+                        isMasternode: candidate.isMasternode,
+                        isPenalty: candidate.isPenalty,
+                        name: candidate.name || 'Anonymous',
+                        cap: new BigNumber(candidate.capacity).div(10 ** 18).toNumber(),
+                        latestSignedBlock: candidate.latestSignedBlock
+                    })
+                })
+                self.candidates = items
+
+                self.totalRows = candidates.data.total
+
+                self.loading = false
+                self.getTableCssClass()
+            } catch (e) {
+                self.loading = false
+                console.log(e)
+            }
+        },
+        changeTable (tableName) {
+            this.currentPage = 1
+            this.$store.state.currentPage = 1
+            if (this.currentTable !== tableName) {
+                this.currentTable = tableName
+                this.loadDataTables(tableName)
+            }
+        },
+        loadDataTables (tableName) {
+            switch (tableName) {
+            case 'masternodes':
+                this.getDataFromApi()
+                break
+            case 'slashed':
+                this.getSlashedMNs()
+                break
+            case 'proposed':
+                this.getProposedMNs()
+                break
+            case 'resigned':
+                this.getResignedMNs()
+                break
+            default:
+                this.getDataFromApi()
+                break
+            }
         }
     }
 }

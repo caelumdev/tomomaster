@@ -15,61 +15,259 @@ const uuidv4 = require('uuid/v4')
 const urljoin = require('url-join')
 
 const gas = config.get('blockchain.gas')
-const gasPrice = config.get('blockchain.gasPrice')
 
-router.get('/', async function (req, res, next) {
-    let limit = (req.query.limit) ? parseInt(req.query.limit) : 200
-    const skip = (req.query.page) ? limit * (req.query.page - 1) : 0
-    if (limit > 200) {
-        limit = 200
+router.get('/', [
+    query('limit')
+        .isInt({ min: 0, max: 200 }).optional().withMessage('limit should greater than 0 and less than 200'),
+    query('page').isNumeric({ no_symbols: true }).optional().withMessage('page must be number')
+], async function (req, res, next) {
+    const errors = validationResult(req)
+    if (!errors.isEmpty()) {
+        return next(errors.array())
     }
+
+    let limit = (req.query.limit) ? parseInt(req.query.limit) : 200
+    let skip
+    skip = (req.query.page) ? limit * (req.query.page - 1) : 0
     try {
+        const total = db.Candidate.countDocuments({
+            smartContractAddress: config.get('blockchain.validatorAddress')
+        })
+        const activeCandidates = db.Candidate.countDocuments({
+            smartContractAddress: config.get('blockchain.validatorAddress'),
+            status: { $ne: 'RESIGNED' }
+        })
+
+        const sort = {}
+
+        if (req.query.sortBy) {
+            sort[req.query.sortBy] = (req.query.sortDesc === 'true') ? -1 : 1
+            if (req.query.sortBy === 'capacity') {
+                delete sort.capacity
+                sort.capacityNumber = (req.query.sortDesc === 'true') ? -1 : 1
+            }
+        } else {
+            sort.capacityNumber = -1
+        }
+
         let data = await Promise.all([
             db.Candidate.find({
                 smartContractAddress: config.get('blockchain.validatorAddress')
-            }).sort({ capacityNumber: 'desc' }).limit(limit).skip(skip).lean().exec(),
-            db.Signer.findOne({}).sort({ _id: 'desc' }),
-            db.Penalty.find({}).sort({ blockNumber: 'desc' }).lean().exec()
+            }).sort(sort).limit(limit).skip(skip).lean().exec()
         ])
 
         let candidates = data[0]
-        let latestSigners = data[1]
-        let latestPenalties = data[2]
-
-        let signers = (latestSigners || {}).signers || []
-        let penalties = []
-        latestPenalties.forEach(p => {
-            penalties = _.concat(penalties, (p || {}).penalties || [])
-        })
-
-        const setS = new Set()
-        for (let i = 0; i < signers.length; i++) {
-            setS.add((signers[i] || '').toLowerCase())
-        }
-
-        const setP = new Set()
-        for (let i = 0; i < penalties.length; i++) {
-            setP.add((penalties[i] || '').toLowerCase())
-        }
 
         let map = candidates.map(async c => {
             // is masternode
-            if (signers.length === 0) {
-                c.isMasternode = !!c.latestSignedBlock
-            } else {
-                c.isMasternode = setS.has((c.candidate || '').toLowerCase())
-            }
-            // is penalty
-            c.isPenalty = setP.has((c.candidate || '').toLowerCase())
-
-            c.status = (c.isMasternode) ? 'MASTERNODE' : c.status
-            c.status = (c.isPenalty) ? 'SLASHED' : c.status
-
+            c.isMasternode = (c.status === 'MASTERNODE' || c.status === 'SLASHED')
             return c
         })
         let ret = await Promise.all(map)
 
-        return res.json(ret)
+        return res.json({
+            items: ret,
+            total: await total,
+            activeCandidates: await activeCandidates
+        })
+    } catch (e) {
+        return next(e)
+    }
+})
+
+router.get('/masternodes', [
+    query('limit')
+        .isInt({ min: 0, max: 200 }).optional().withMessage('limit should greater than 0 and less than 200'),
+    query('page').isNumeric({ no_symbols: true }).optional().withMessage('page must be number')
+], async function (req, res, next) {
+    const errors = validationResult(req)
+    if (!errors.isEmpty()) {
+        return next(errors.array())
+    }
+
+    let limit = (req.query.limit) ? parseInt(req.query.limit) : 200
+    let skip
+    skip = (req.query.page) ? limit * (req.query.page - 1) : 0
+    try {
+        const activeCandidates = db.Candidate.countDocuments({
+            smartContractAddress: config.get('blockchain.validatorAddress'),
+            status: { $nin: ['RESIGNED', 'PROPOSED'] }
+        })
+
+        const totalSlashed = db.Candidate.countDocuments({
+            smartContractAddress: config.get('blockchain.validatorAddress'),
+            status: 'SLASHED'
+        })
+
+        const totalResigned = db.Candidate.countDocuments({
+            smartContractAddress: config.get('blockchain.validatorAddress'),
+            status: 'RESIGNED'
+        }).lean().exec()
+
+        const totalProposed = db.Candidate.countDocuments({
+            smartContractAddress: config.get('blockchain.validatorAddress'),
+            status: 'PROPOSED'
+        }).lean().exec()
+
+        const sort = {}
+
+        if (req.query.sortBy) {
+            sort[req.query.sortBy] = (req.query.sortDesc === 'true') ? -1 : 1
+            if (req.query.sortBy === 'capacity') {
+                delete sort.capacity
+                sort.capacityNumber = (req.query.sortDesc === 'true') ? -1 : 1
+            }
+        } else {
+            sort.capacityNumber = -1
+        }
+
+        const candidates = await db.Candidate.find({
+            smartContractAddress: config.get('blockchain.validatorAddress'),
+            status: { $nin: ['RESIGNED', 'PROPOSED'] }
+        }).sort(sort).limit(limit).skip(skip).lean().exec()
+
+        return res.json({
+            items: candidates,
+            activeCandidates: await activeCandidates || 0,
+            totalSlashed: await totalSlashed,
+            totalResigned: await totalResigned,
+            totalProposed: await totalProposed
+        })
+    } catch (e) {
+        return next(e)
+    }
+})
+
+router.get('/slashedMNs', [
+    query('limit')
+        .isInt({ min: 0, max: 200 }).optional().withMessage('limit should greater than 0 and less than 200'),
+    query('page').isNumeric({ no_symbols: true }).optional().withMessage('page must be number')
+], async function (req, res, next) {
+    const errors = validationResult(req)
+    if (!errors.isEmpty()) {
+        return next(errors.array())
+    }
+
+    let limit = (req.query.limit) ? parseInt(req.query.limit) : 200
+    let skip
+    skip = (req.query.page) ? limit * (req.query.page - 1) : 0
+    try {
+        const total = db.Candidate.countDocuments({
+            smartContractAddress: config.get('blockchain.validatorAddress'),
+            status: 'SLASHED'
+        })
+
+        const sort = {}
+
+        if (req.query.sortBy) {
+            sort[req.query.sortBy] = (req.query.sortDesc === 'true') ? -1 : 1
+            if (req.query.sortBy === 'capacity') {
+                delete sort.capacity
+                sort.capacityNumber = (req.query.sortDesc === 'true') ? -1 : 1
+            }
+        } else {
+            sort.capacityNumber = -1
+        }
+
+        const candidates = await db.Candidate.find({
+            smartContractAddress: config.get('blockchain.validatorAddress'),
+            status: 'SLASHED'
+        }).sort(sort).limit(limit).skip(skip).lean().exec()
+
+        return res.json({
+            items: candidates,
+            total: await total
+        })
+    } catch (e) {
+        return next(e)
+    }
+})
+
+router.get('/proposedMNs', [
+    query('limit')
+        .isInt({ min: 0, max: 200 }).optional().withMessage('limit should greater than 0 and less than 200'),
+    query('page').isNumeric({ no_symbols: true }).optional().withMessage('page must be number')
+], async function (req, res, next) {
+    try {
+        const errors = validationResult(req)
+        if (!errors.isEmpty()) {
+            return next(errors.array())
+        }
+
+        let limit = (req.query.limit) ? parseInt(req.query.limit) : 200
+        let skip
+        skip = (req.query.page) ? limit * (req.query.page - 1) : 0
+        const sort = {}
+
+        if (req.query.sortBy) {
+            sort[req.query.sortBy] = (req.query.sortDesc === 'true') ? -1 : 1
+            if (req.query.sortBy === 'capacity') {
+                delete sort.capacity
+                sort.capacityNumber = (req.query.sortDesc === 'true') ? -1 : 1
+            }
+        } else {
+            sort.capacityNumber = -1
+        }
+
+        const total = db.Candidate.countDocuments({
+            smartContractAddress: config.get('blockchain.validatorAddress'),
+            status: 'PROPOSED'
+        }).lean().exec()
+
+        let candidates = await db.Candidate.find({
+            smartContractAddress: config.get('blockchain.validatorAddress'),
+            status: 'PROPOSED'
+        }).sort(sort).limit(limit).skip(skip).lean().exec()
+
+        return res.json({
+            items: candidates,
+            total: await total
+        })
+    } catch (e) {
+        return next(e)
+    }
+})
+
+router.get('/resignedMNs', [
+    query('limit')
+        .isInt({ min: 0, max: 200 }).optional().withMessage('limit should greater than 0 and less than 200'),
+    query('page').isNumeric({ no_symbols: true }).optional().withMessage('page must be number')
+], async function (req, res, next) {
+    const errors = validationResult(req)
+    if (!errors.isEmpty()) {
+        return next(errors.array())
+    }
+
+    let limit = (req.query.limit) ? parseInt(req.query.limit) : 200
+    let skip
+    skip = (req.query.page) ? limit * (req.query.page - 1) : 0
+    try {
+        const total = db.Candidate.countDocuments({
+            smartContractAddress: config.get('blockchain.validatorAddress'),
+            status: 'RESIGNED'
+        })
+
+        const sort = {}
+
+        if (req.query.sortBy) {
+            sort[req.query.sortBy] = (req.query.sortDesc === 'true') ? -1 : 1
+            if (req.query.sortBy === 'capacity') {
+                delete sort.capacity
+                sort.capacityNumber = (req.query.sortDesc === 'true') ? -1 : 1
+            }
+        } else {
+            sort.capacityNumber = -1
+        }
+
+        const candidates = await db.Candidate.find({
+            smartContractAddress: config.get('blockchain.validatorAddress'),
+            status: 'RESIGNED'
+        }).sort(sort).limit(limit).skip(skip).lean().exec()
+
+        return res.json({
+            items: candidates,
+            total: await total
+        })
     } catch (e) {
         return next(e)
     }
@@ -128,7 +326,12 @@ router.get('/:candidate', async function (req, res, next) {
     }).lean().exec() || {})
 
     let latestSigners = await db.Signer.findOne({}).sort({ _id: 'desc' })
-    let latestPenalties = await db.Penalty.find({}).sort({ blockNumber: 'desc' }).lean().exec()
+    let latestPenalties = await db.Penalty.find({}).sort({ epoch: 'desc' }).lean().exec()
+    // Get slashed times in a week
+    const epochsPerWeek = 336
+    const promise = db.Status.find({
+        candidate: address
+    }).sort({ epoch: -1 }).limit(epochsPerWeek).lean().exec() || 0
 
     let signers = (latestSigners || {}).signers || []
     let penalties = []
@@ -154,32 +357,59 @@ router.get('/:candidate', async function (req, res, next) {
 
     candidate.isPenalty = setP.has((candidate.candidate || '').toLowerCase())
 
-    candidate.status = (candidate.isMasternode) ? 'MASTERNODE' : candidate.status
-    candidate.status = (candidate.isPenalty) ? 'SLASHED' : candidate.status
+    const statusInWeek = await promise
+
+    const slashedInWeek = statusInWeek.filter(s => s.status === 'SLASHED')
+
+    candidate.slashedTimes = slashedInWeek.length || 0
 
     return res.json(candidate)
 })
 
-router.get('/:candidate/voters', async function (req, res, next) {
+router.get('/:candidate/voters', [
+    query('limit')
+        .isInt({ min: 0, max: 200 }).optional().withMessage('limit should greater than 0 and less than 200'),
+    query('page').isNumeric({ no_symbols: true }).optional().withMessage('page must be number')
+], async function (req, res, next) {
+    const errors = validationResult(req)
+    if (!errors.isEmpty()) {
+        return next(errors.array())
+    }
+
     let limit = (req.query.limit) ? parseInt(req.query.limit) : 200
-    const skip = (req.query.page) ? limit * (req.query.page - 1) : 0
-    if (limit > 200) {
-        limit = 200
+    let skip
+
+    skip = (req.query.page) ? limit * (req.query.page - 1) : 0
+
+    let total = db.Voter.countDocuments({
+        smartContractAddress: config.get('blockchain.validatorAddress'),
+        candidate: (req.params.candidate || '').toLowerCase()
+    })
+
+    const sort = {}
+    if (req.query.sortBy) {
+        sort[req.query.sortBy] = (req.query.sortDesc === 'true') ? -1 : 1
+    } else {
+        sort.capacityNumber = -1
     }
 
     let voters = await db.Voter.find({
         smartContractAddress: config.get('blockchain.validatorAddress'),
         candidate: (req.params.candidate || '').toLowerCase()
-    }).limit(limit).skip(skip)
-    return res.json(voters)
+    }).sort(sort).limit(limit).skip(skip)
+    return res.json({
+        items: await voters,
+        total: await total
+    })
 })
 // deprecated
 router.get('/:candidate/rewards', async function (req, res, next) {
     let limit = (req.query.limit) ? parseInt(req.query.limit) : 200
-    const skip = (req.query.page) ? limit * (req.query.page - 1) : 0
+    let skip
     if (limit > 200) {
         limit = 200
     }
+    skip = (req.query.page) ? limit * (req.query.page - 1) : 0
     let rewards = await db.MnReward.find({
         address: (req.params.candidate || '').toLowerCase()
     }).sort({ _id: -1 }).limit(limit).skip(skip)
@@ -190,6 +420,7 @@ router.get('/:candidate/rewards', async function (req, res, next) {
 router.post('/apply', async function (req, res, next) {
     let key = req.query.key
     let network = config.get('blockchain.rpc')
+    const gasPrice = await web3.eth.getGasPrice()
     try {
         let walletProvider =
             (key.indexOf(' ') >= 0)
@@ -242,6 +473,7 @@ router.post('/apply', async function (req, res, next) {
 router.post('/applyBulk', async function (req, res, next) {
     let key = req.query.key
     let network = config.get('blockchain.rpc')
+    const gasPrice = await web3.eth.getGasPrice()
     try {
         let walletProvider =
             (key.indexOf(' ') >= 0)
@@ -291,6 +523,7 @@ router.post('/applyBulk', async function (req, res, next) {
 router.post('/resign', async function (req, res, next) {
     let key = req.query.key
     let network = config.get('blockchain.rpc')
+    const gasPrice = await web3.eth.getGasPrice()
     try {
         let walletProvider =
             (key.indexOf(' ') >= 0)
@@ -315,6 +548,7 @@ router.post('/resign', async function (req, res, next) {
 router.post('/vote', async function (req, res, next) {
     let key = req.query.key
     let network = config.get('blockchain.rpc')
+    const gasPrice = await web3.eth.getGasPrice()
     try {
         let walletProvider =
             (key.indexOf(' ') >= 0)
@@ -338,6 +572,7 @@ router.post('/vote', async function (req, res, next) {
 router.post('/unvote', async function (req, res, next) {
     let key = req.query.key
     let network = config.get('blockchain.rpc')
+    const gasPrice = await web3.eth.getGasPrice()
     try {
         let walletProvider =
             (key.indexOf(' ') >= 0)
@@ -382,21 +617,93 @@ router.get('/:candidate/isCandidate', async function (req, res, next) {
 })
 
 // Get masternode rewards
-router.get('/:candidate/:owner/getRewards', async function (req, res, next) {
+router.get('/:candidate/:owner/getRewards', [
+    query('limit')
+        .isInt({ min: 0, max: 100 }).optional().withMessage('limit should greater than 0 and less than 200'),
+    query('page').isNumeric({ no_symbols: true }).optional().withMessage('page must be number')
+], async function (req, res, next) {
     try {
+        const errors = validationResult(req)
+        if (!errors.isEmpty()) {
+            return next(errors.array())
+        }
+
         const candidate = req.params.candidate
         const owner = req.params.owner
-        const limit = 100
+
+        const latestBlockNumber = await web3.eth.getBlockNumber()
+        const latestCheckpoint = latestBlockNumber - (latestBlockNumber % parseInt(config.get('blockchain.epoch')))
+        const currentEpoch = (parseInt(latestCheckpoint / config.get('blockchain.epoch')) + 1).toString()
+
+        let limit = (req.query.limit) ? parseInt(req.query.limit) : 100
+        const page = parseInt(req.query.page) || 1
+        let skip
+        skip = (page) ? limit * (page - 1) : 0
+        let masternodesRW = []
+
+        const total = db.Status.countDocuments({
+            candidate: candidate,
+            epoch: {
+                $lt: currentEpoch - 2
+            }
+        })
+
+        const epochData = await db.Status.find({
+            candidate: candidate,
+            epoch: {
+                $lt: currentEpoch - 2
+            }
+        }).sort({ epoch: -1 }).limit(limit).skip(skip).lean().exec()
+        let masternodesEpochs = []
+
+        epochData.map(e => {
+            if (e.status === 'MASTERNODE') {
+                masternodesEpochs.push(e.epoch)
+            }
+        })
+
+        let masternodes = epochData.filter(e => e.status === 'MASTERNODE')
         const rewards = await axios.post(
-            urljoin(config.get('tomoscanUrl'), 'api/expose/rewards'),
+            urljoin(config.get('tomoscanUrl'), 'api/expose/MNRewardsByEpochs'),
             {
                 address: candidate,
-                limit,
                 owner: owner,
-                reason: 'Voter'
+                reason: 'Voter',
+                epoch: masternodesEpochs
             }
         )
-        return res.json(rewards.data)
+
+        if (rewards.data && rewards.data.length > 0) {
+            const rwData = rewards.data
+            masternodesRW = rwData.map((r) => {
+                const mn = masternodes.find(m => m.epoch === r.epoch) || {}
+                r.status = 'MASTERNODE'
+                if (!r.reward) {
+                    r.rewardTime = mn.epochCreatedAt || ''
+                }
+                if (currentEpoch - r.epoch < 2) {
+                    r.masternodeReward = '-'
+                    r.signNumber = '-'
+                }
+                return r
+            })
+        }
+
+        let noRewardEpochs = epochData.filter(e => e.status !== 'MASTERNODE')
+
+        if (noRewardEpochs.length > 0) {
+            noRewardEpochs = noRewardEpochs.map(n => {
+                n.masternodeReward = 0
+                n.rewardTime = n.epochCreatedAt
+                n.signNumber = 0
+                return n
+            })
+        }
+        const items = masternodesRW.concat(noRewardEpochs)
+        return res.json({
+            items: items,
+            total: await total
+        })
     } catch (e) {
         return next(e)
     }
@@ -434,12 +741,27 @@ router.put('/update', [
             set['dataCenter.location'] = body.dcLocation
         }
 
+        set['socials.website'] = body.website || ''
+        set['socials.telegram'] = body.telegram || ''
+
         const address = await web3.eth.accounts.recover(message, signedMessage)
 
         if (
             address.toLowerCase() === c.candidate.toLowerCase() ||
             address.toLowerCase() === c.owner.toLowerCase()
         ) {
+            if (c.name) {
+                const currentBlockNumber = await web3.eth.getBlockNumber()
+                const data = set
+                data.candidate = candidate.toLowerCase()
+                data.blockNumber = currentBlockNumber
+
+                await db.History.updateOne({
+                    candidate: candidate.toLowerCase(), blockNumber: currentBlockNumber
+                }, {
+                    $set: data
+                }, { upsert: true })
+            }
             await db.Candidate.updateOne({
                 smartContractAddress: config.get('blockchain.validatorAddress'),
                 candidate: candidate.toLowerCase()
@@ -581,6 +903,130 @@ router.get('/:candidate/getSignature', [
         }
     } catch (e) {
         next(e)
+    }
+})
+
+router.get('/:candidate/:owner/isOwner', async (req, res, next) => {
+    const errors = validationResult(req)
+    if (!errors.isEmpty()) {
+        return next(errors.array())
+    }
+    try {
+        const isOwner = await db.Candidate.findOne({
+            smartContractAddress: config.get('blockchain.validatorAddress'),
+            owner: (req.params.owner || '').toLowerCase(),
+            candidate: (req.params.candidate || '').toLowerCase()
+        })
+        if (isOwner) {
+            return res.send(true)
+        } else return res.send(false)
+    } catch (e) {
+        next(e)
+    }
+})
+
+router.get('/slashed/:epoch', [
+    check('epoch').isLength({ min: 1 }).exists().withMessage('Epoch is required')
+], async function (req, res, next) {
+    const errors = validationResult(req)
+    if (!errors.isEmpty()) {
+        return next(errors.array())
+    }
+    try {
+        let epoch = req.params.epoch
+        let response = {
+            epoch,
+            penalties: [],
+            networkId: config.get('blockchain.networkId')
+        }
+        let penalty
+        penalty = await db.Penalty.findOne({ epoch: epoch })
+        if (penalty && penalty.penalties.length > 0) {
+            response = penalty
+        } else {
+            penalty = await db.Status.find({ epoch: epoch, status: 'SLASHED' })
+            if (penalty.length > 0) {
+                await Promise.all(penalty.map(p => {
+                    response.penalties.push(p.candidate)
+                }))
+            }
+        }
+
+        return res.json(response)
+    } catch (e) {
+        return next(e)
+    }
+})
+
+router.get('/:candidate/slashedFilter', [
+    query('limit')
+        .isInt({ min: 0, max: 200 }).optional().withMessage('limit should greater than 0 and less than 200'),
+    query('page').isNumeric({ no_symbols: true }).optional().withMessage('page must be number'),
+    check('filterBy').isLength({ min: 1 }).exists().withMessage('filterBy is required')
+], async function (req, res, next) {
+    const errors = validationResult(req)
+    if (!errors.isEmpty()) {
+        return next(errors.array())
+    }
+    try {
+        let limit = (req.query.limit) ? parseInt(req.query.limit) : 200
+        let skip
+        skip = (req.query.page) ? limit * (req.query.page - 1) : 0
+        const filterBy = req.query.filterBy
+        const candidate = req.params.candidate
+
+        let current = new Date()
+        const today = new Date()
+
+        let totalEpochs, epochs, fromTime
+
+        switch (filterBy) {
+        case 'week':
+            const aWeekAgo = new Date(current.setDate(current.getDate() - 7))
+            fromTime = aWeekAgo
+            break
+        case 'month':
+            const aMonthAgo = new Date(current.setMonth(current.getMonth() - 1))
+            fromTime = aMonthAgo
+            break
+        case 'year':
+            const aYearAgo = new Date(current.setFullYear(current.getFullYear() - 1))
+            fromTime = aYearAgo
+            break
+        default:
+            fromTime = new Date(current.setDate(current.getDate() - 7))
+            break
+        }
+
+        totalEpochs = await db.Status.countDocuments({
+            candidate: candidate.toLowerCase(),
+            status: 'SLASHED',
+            epochCreatedAt: {
+                $gte: fromTime,
+                $lt: today
+            }
+        }).lean().exec()
+        epochs = await db.Status.find({
+            candidate: candidate.toLowerCase(),
+            status: 'SLASHED',
+            epochCreatedAt: {
+                $gte: fromTime,
+                $lt: today
+            }
+        }).sort({ epoch: -1 }).limit(limit).skip(skip).lean().exec()
+
+        Promise.all(epochs.map(e => {
+            e.rewardTime = e.epochCreatedAt
+        })).catch(e => console.log(e))
+
+        return res.json({
+            items: epochs,
+            total: totalEpochs,
+            from: fromTime,
+            to: today
+        })
+    } catch (e) {
+        return next(e)
     }
 })
 

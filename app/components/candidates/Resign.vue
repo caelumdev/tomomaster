@@ -90,7 +90,8 @@ export default {
             coinbase: this.$route.params.address,
             provider: this.NetworkProvider || store.get('network') || null,
             qrCode: 'text',
-            interval: null
+            interval: null,
+            gasPrice: null
         }
     },
     computed: { },
@@ -102,6 +103,7 @@ export default {
         self.config = await self.appConfig()
         self.chainConfig = self.config.blockchain || {}
         self.isReady = !!self.web3
+        self.gasPrice = await self.web3.eth.getGasPrice()
         try {
             if (self.isReady) {
                 if (store.get('address')) {
@@ -136,7 +138,7 @@ export default {
                 let coinbase = self.coinbase
                 let txParams = {
                     from: account,
-                    gasPrice: self.web3.utils.toHex(self.chainConfig.gasPrice),
+                    gasPrice: self.web3.utils.toHex(self.gasPrice),
                     gas: self.web3.utils.toHex(self.chainConfig.gas),
                     gasLimit: self.web3.utils.toHex(self.chainConfig.gas),
                     chainId: self.chainConfig.networkId
@@ -194,7 +196,7 @@ export default {
                     const data = {
                         voter: self.account,
                         candidate: self.coinbase,
-                        amount: self.voteValue,
+                        amount: self.voteValue || 0,
                         action: 'resign'
                     }
                     // call api to generate qr code

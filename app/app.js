@@ -58,6 +58,12 @@ Vue.use(Toasted, {
     }
 })
 
+// set trezor's manifest
+TrezorConnect.manifest({
+    email: 'admin@tomochain.com',
+    appUrl: 'https://master.tomochain.com'
+})
+
 stockInit(Highcharts)
 Vue.use(HighchartsVue)
 
@@ -71,7 +77,11 @@ Vue.prototype.setupProvider = function (provider, wjs) {
         Vue.prototype.web3 = wjs
         Vue.prototype.TomoValidator.setProvider(wjs.currentProvider)
         Vue.prototype.getAccount = function () {
-            var p = new Promise(function (resolve, reject) {
+            var p = new Promise(async function (resolve, reject) {
+                if (provider === 'metamask') {
+                    // Request account access if needed - for metamask
+                    await window.ethereum.enable()
+                }
                 wjs.eth.getAccounts(async function (err, accs) {
                     if (err != null) {
                         console.log('There was an error fetching your accounts.')
@@ -344,12 +354,9 @@ getConfig().then((config) => {
     // var web3js = new Web3(new Web3.providers.HttpProvider(config.blockchain.rpc))
     // Vue.prototype.setupProvider(provider, web3js)
 
-    Vue.prototype.txFee = new BigNumber(
-        config.blockchain.gas * config.blockchain.gasPrice
-    ).div(10 ** 18).toString(10)
-
     Vue.use(VueAnalytics, {
         id: config.GA,
+        linkers: ['tomochain.com'],
         router,
         autoTraking: {
             screenView: true
@@ -511,6 +518,39 @@ Vue.prototype.signMessage = async function (message) {
         console.log(error)
         throw error
     }
+}
+
+Vue.prototype.serializeQuery = function (params, prefix) {
+    const query = Object.keys(params).map((key) => {
+        const value = params[key]
+
+        if (params.constructor === Array) {
+            key = `${prefix}[]`
+        } else {
+            if (params.constructor === Object) {
+                key = (prefix ? `${prefix}[${key}]` : key)
+            }
+        }
+
+        return value === 'object' ? this.serializeQuery(value, key) : `${key}=${encodeURIComponent(value)}`
+    })
+
+    return [].concat.apply([], query).join('&')
+}
+
+Vue.prototype.truncate = (fullStr, strLen) => {
+    if (fullStr.length <= strLen) return fullStr
+
+    const separator = '...'
+
+    let sepLen = separator.length
+    let charsToShow = strLen - sepLen
+    let frontChars = Math.ceil(charsToShow / 2)
+    let backChars = Math.floor(charsToShow / 2)
+
+    return fullStr.substr(0, frontChars) +
+           separator +
+           fullStr.substr(fullStr.length - backChars)
 }
 
 const EventBus = new Vue()

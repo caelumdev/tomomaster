@@ -13,61 +13,101 @@ const { check, validationResult, query } = require('express-validator/check')
 const urljoin = require('url-join')
 
 router.get('/:voter/candidates', [
-    check('limit').isInt({ min: 1, max: 200 }).optional().withMessage('Wrong limit')
+    query('limit')
+        .isInt({ min: 0, max: 200 }).optional().withMessage('limit should greater than 0 and less than 200'),
+    query('page').isNumeric({ no_symbols: true }).optional().withMessage('page must be number')
 ], async function (req, res, next) {
     const errors = validationResult(req)
     if (!errors.isEmpty()) {
         return next(errors.array())
     }
+
     let limit = (req.query.limit) ? parseInt(req.query.limit) : 200
-    const skip = (req.query.page) ? limit * (req.query.page - 1) : 0
-    if (limit > 200) {
-        limit = 200
-    }
+    let skip
+    skip = (req.query.page) ? limit * (req.query.page - 1) : 0
     try {
+        const total = db.Voter.countDocuments({
+            smartContractAddress: config.get('blockchain.validatorAddress'),
+            voter: (req.params.voter || '').toLowerCase(),
+            capacityNumber: { $ne: 0 }
+        })
+        const sort = {}
+        if (req.query.sortBy) {
+            sort[req.query.sortBy] = (req.query.sortDesc === 'true') ? -1 : 1
+        } else {
+            sort.capacityNumber = -1
+        }
+
         let voters = await db.Voter.find({
             smartContractAddress: config.get('blockchain.validatorAddress'),
             voter: (req.params.voter || '').toLowerCase(),
             capacityNumber: { $ne: 0 }
-        }).sort({ capacityNumber: 'desc' }).limit(limit).skip(skip).lean().exec()
+        }).sort(sort).limit(limit).skip(skip).lean().exec()
+
         let cs = voters.map(v => v.candidate)
+
         let candidates = await db.Candidate.find({
             candidate: { $in: cs }
         }).lean().exec()
+
         voters = voters.map(v => {
-            v.candidateName = (_.findLast(candidates, (c) => {
+            let it = (_.findLast(candidates, (c) => {
                 return (c.candidate === v.candidate)
-            }) || {}).name || 'Anonymous'
-            return _.pick(v, ['candidate', 'capacity', 'capacityNumber', 'candidateName'])
+            }) || {})
+            v.candidateName = it.name || 'Anonymous'
+            v.totalCapacity = it.capacity
+            v.status = it.status
+            v.owner = it.owner
+            return _.pick(v, ['candidate', 'capacity', 'capacityNumber', 'totalCapacity',
+                'candidateName', 'status', 'owner'])
         })
-        return res.json(voters)
+        return res.json({
+            items: voters,
+            total: await total
+        })
     } catch (e) {
         return next(e)
     }
 })
 
-router.get('/:voter/rewards', async function (req, res, next) {
+router.get('/:voter/rewards', [
+    query('limit')
+        .isInt({ min: 0, max: 100 }).optional().withMessage('limit should greater than 0 and less than 200'),
+    query('page').isNumeric({ no_symbols: true }).optional().withMessage('page must be number')
+], async function (req, res, next) {
     try {
+        const errors = validationResult(req)
+        if (!errors.isEmpty()) {
+            return next(errors.array())
+        }
+
         const voter = req.params.voter
-        const limit = 100
+        const page = (req.query.page) ? parseInt(req.query.page) : 1
+        let limit = (req.query.limit) ? parseInt(req.query.limit) : 100
+
         const rewards = await axios.post(
             urljoin(config.get('tomoscanUrl'), 'api/expose/rewards'),
             {
                 address: voter,
-                limit
+                limit,
+                page: page
             }
         )
-        const cs = rewards.data.map(r => r.validator)
+
+        const cs = rewards.data.items.map(r => r.validator)
         const candidates = await db.Candidate.find({
             candidate: { $in: cs }
         }).lean().exec()
-        const rd = rewards.data.map(r => {
+        const rd = rewards.data.items.map(r => {
             r.candidateName = (_.findLast(candidates, (c) => {
                 return (c.candidate.toLowerCase() === r.validator.toLowerCase())
             }) || {}).name || r.validator
             return r
         })
-        res.json(rd)
+        res.json({
+            items: rd,
+            total: rewards.data.total
+        })
     } catch (e) {
         return next(e)
     }
@@ -94,7 +134,7 @@ router.post('/generateQR', [
             candidate: candidate
         }) || {})
 
-        const candidateName = candidateInfo.name ? candidateInfo.name : 'Anonymous Candidate'
+        const candidateName = candidateInfo.name ? candidateInfo.name : 'Anonymous'
 
         const message = voter + ' ' + action + ' ' + amount + ' TOMO for candidate ' + candidate + ' - ' + candidateName
         const id = uuidv4()
@@ -153,18 +193,19 @@ router.post('/verifyTx', [
                 throw new Error('amount is required')
             }
         }
+
         const checkId = await db.SignTransaction.findOne({ signId: id })
 
         if (!checkId) {
             throw Error('id is not match, wrong qr code')
         }
 
-        if (action !== 'withdraw' && action !== 'resign') {
+        if (action !== 'withdraw') {
             if (!candidate) {
                 throw Error('candidate is required')
+            } else if (checkId.candidate.toLowerCase() !== candidate) {
+                throw Error('candidate is not match')
             }
-        } else if (checkId.candidate.toLowerCase() !== candidate) {
-            throw Error('candidate is not match')
         }
         if (!checkId.status) {
             throw Error('Cannot use a QR code twice')
@@ -282,7 +323,76 @@ router.get('/getScanningResult', [
         console.log(e)
         return res.status(500).send(e)
     }
-}
-)
+})
+
+router.get('/calculatingReward1Day', [], async (req, res, next) => {
+    try {
+        // candidate
+        const address = (req.query.candidate || '').toLowerCase()
+        // amount
+        const amount = new BigNumber(req.query.amount || 0)
+
+        // search candidate
+        const candidatePromise = db.Candidate.findOne({
+            smartContractAddress: config.get('blockchain.validatorAddress'),
+            candidate: address
+        })
+
+        let current = new Date()
+        let yesterday = new Date(current.setDate(current.getDate() - 1))
+        const theDayBeforeYes = new Date(current.setDate(current.getDate() - 1))
+
+        const epochIn1Day = db.Status.count({
+            candidate: address,
+            epochCreatedAt: {
+                $gte: theDayBeforeYes,
+                $lt: yesterday
+            }
+        })
+
+        const candidate = await candidatePromise
+
+        // get latest reward
+        const rewards = await axios.post(
+            urljoin(config.get('tomoscanUrl'), 'api/expose/rewards'),
+            {
+                address: address,
+                limit: 1,
+                page: 1,
+                owner: candidate.owner,
+                reason: 'Voter'
+            }
+        )
+        let signNumber = 0
+        let epoch
+        if (rewards.data.items.length > 0) {
+            signNumber = rewards.data.items[0].signNumber
+            epoch = rewards.data.items[0].epoch
+        }
+
+        const capacity = new BigNumber(candidate.capacity).div(10 ** 18)
+        const totalReward = new BigNumber(config.get('blockchain.reward'))
+        // get total signers in latest epoch
+        let totalSigners
+        if (epoch) {
+            totalSigners = await axios.post(
+                urljoin(config.get('tomoscanUrl'), `api/expose/totalSignNumber/${epoch}`)
+            )
+        }
+
+        if (totalSigners && totalSigners.data && totalSigners.data.totalSignNumber) {
+            // calculate devided reward
+            const masternodeReward = totalReward.multipliedBy(signNumber).dividedBy(totalSigners.data.totalSignNumber)
+
+            // calculate voter reward 1 day
+            const estimateReward = masternodeReward.multipliedBy(0.5)
+                .multipliedBy(amount).div(capacity.plus(amount)).multipliedBy(await epochIn1Day) || 'N/A'
+            return res.send(estimateReward.toString(10))
+        }
+        return res.send('N/A')
+    } catch (error) {
+        return next(error)
+    }
+})
 
 module.exports = router

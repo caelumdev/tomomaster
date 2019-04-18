@@ -1,8 +1,13 @@
 .navbar {
     background-image: linear-gradient(-135deg, #373658 0%, #40406a 100%);
 
+    &.navbar-light {
+        padding-top: 4px;
+    }
+
     > .container {
         align-items: center;
+        padding: 0;
     }
 }
 
@@ -17,6 +22,10 @@
     text-align: right;
     margin-top: 10px;
     margin-bottom: 7px;
+    button {
+        display: inline-flex;
+        vertical-align: middle;
+    }
 
     > a {
         display: inline-block;
@@ -59,4 +68,74 @@
         color: $color-link !important;
         transform: rotate(45deg);
     }
+}
+
+.dd-setting {
+    font-size: 0;
+    width: 20px;
+
+    i {
+        display: inline-block;
+        font-size: 18px;
+        color: #678be0;
+
+        @extend %transit;
+    }
+
+    &:hover i {
+        color: $color-link !important;
+        transform: rotate(45deg);
+    }
+    button {
+        background: none;
+        border: none;
+        padding: 0;
+        &:hover {
+            background: none;
+            border-color: none;
+        }
+        &:focus {
+            background: none;
+            border-color: none;
+        }
+    }
+}
+
+.masternode-bar,
+.candidate-reward-bar {
+    a {
+        text-align: center;
+        text-decoration: none;
+        cursor: pointer;
+
+        &:hover {
+            color: #30ddd8 !important;
+        }
+    }
+    a.tab-active {
+        color: #30ddd8;
+    }
+}
+
+.dd-address {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 15rem;
+
+    &:after {
+        position: absolute;
+        left: 100%;
+        top: 0;
+    }
+
+    @include media-breakpoint-only(sm) {
+        .text-truncate {
+            max-width: 15rem;
+        }
+    }
+}
+// add more to vue dropdown bootstrap
+.dropdown-menu {
+    margin-top: 17px;
 }

@@ -8,13 +8,9 @@
                     </b-navbar-brand>
 
                     <b-nav-form class="search-form">
-                        <b-form-input
+                        <auto-complete
                             v-model="search"
-                            type="text"
-                            autocomplete="off"
-                            placeholder="Search Candidate / Voter address ..."
-                            @keyup.enter="searchCandidate"
-                        />
+                            :items="items"/>
                         <b-button
                             variant="outline-success"
                             type="submit"
@@ -33,12 +29,39 @@
                             to="/apply"
                             variant="primary">Become a candidate</b-button>
 
-                        <router-link
+                        <!-- <router-link
                             v-if="isTomonet"
                             id="btn-setting"
                             to="/setting">
-                            <i class="tm-cog ml-2" />
-                        </router-link>
+                            <i class="tm-cog ml-1 icon-2x" />
+                        </router-link> -->
+
+                        <b-dropdown
+                            v-if="isTomonet"
+                            class="dd-setting"
+                            right
+                            offset="25"
+                            no-caret
+                            variant="primary">
+                            <template
+                                slot="button-content">
+                                <i class="tm-cog ml-2 icon-2x" />
+                            </template>
+                            <b-dropdown-item
+                                :to="`/voter/${account}`"
+                                class="dd-address">
+                                {{ truncate(account, 20) }}
+                            </b-dropdown-item>
+                            <b-dropdown-divider />
+                            <b-dropdown-item
+                                target="_bank"
+                                href="https://bit.ly/2B6p29o">Help</b-dropdown-item>
+                            <b-dropdown-item to="/setting">Settings/Withdraws</b-dropdown-item>
+                            <b-dropdown-divider />
+                            <b-dropdown-item
+                                href="/"
+                                @click="signOut">Sign out</b-dropdown-item>
+                        </b-dropdown>
 
                         <!-- <router-link
                         v-if="isTomonet"
@@ -79,6 +102,11 @@
                                         <a
                                             target="_blank"
                                             href="/terms"><i class="tm-profile mr-1"/>Terms of Service</a>
+                                    </li>
+                                    <li class="list-inline-item">
+                                        <a
+                                            target="_blank"
+                                            href="/apidocs"><i class="tm-checklist mr-1"/>API Documentation</a>
                                     </li>
                                 </ul>
                             </div>
@@ -133,8 +161,12 @@
 import axios from 'axios'
 import store from 'store'
 import pkg from '../package.json'
+import AutoComplete from './components/AutoComplete.vue'
 export default {
     name: 'App',
+    components: {
+        AutoComplete
+    },
     data () {
         return {
             isReady: !!this.web3,
@@ -142,7 +174,9 @@ export default {
             selectedCandidate: null,
             search: null,
             isTomonet: false,
-            version: pkg.version
+            version: pkg.version,
+            account: '',
+            items: []
         }
     },
     async updated () {
@@ -158,6 +192,15 @@ export default {
             self.$bus.$on('logged', async () => {
                 await self.checkNetworkAndLogin()
             })
+            const candidates = await axios.get('/api/candidates')
+            const map = candidates.data.items.map((c) => {
+                return {
+                    name: c.name ? c.name : 'Anonymous',
+                    address: c.candidate
+                }
+            })
+            const mapping = await Promise.all(map)
+            self.items = mapping
         } catch (e) {
             console.log(e)
         }
@@ -165,25 +208,28 @@ export default {
     methods: {
         searchCandidate (e) {
             e.preventDefault()
+            const regexpAddr = /^(0x)?[0-9a-fA-F]{40}$/
 
             let to = null
             let search = (this.search || '').trim()
-            axios.get(`/api/search/${search}`)
-                .then((response) => {
-                    const data = response.data
-                    if (Object.keys(data.candidate).length > 0) {
-                        to = { path: `/candidate/${data.candidate.candidate}` }
-                    } else if (Object.keys(data.voter).length > 0) {
-                        to = { path: `/voter/${search}` }
-                    } else {
-                        this.$toasted.show('Not found')
-                    }
-                    if (!to) {
-                        return false
-                    }
-                    this.search = ''
-                    return this.$router.push(to)
-                }).catch(e => console.log(e))
+            if (regexpAddr.test(search)) {
+                axios.get(`/api/search/${search}`)
+                    .then((response) => {
+                        const data = response.data
+                        if (Object.keys(data.candidate).length > 0) {
+                            to = { path: `/candidate/${data.candidate.candidate}` }
+                        } else if (Object.keys(data.voter).length > 0) {
+                            to = { path: `/voter/${search}` }
+                        } else {
+                            this.$toasted.show('Not found')
+                        }
+                        if (!to) {
+                            return false
+                        }
+                        this.search = ''
+                        return this.$router.push(to)
+                    }).catch(e => console.log(e))
+            }
         },
         goPage: function (s) {
             this.$router.push({ path: `/candidate/${s}` })
@@ -191,20 +237,27 @@ export default {
         async checkNetworkAndLogin () {
             let self = this
             setTimeout(async () => {
-                let account
                 try {
                     const contract = await self.getTomoValidatorInstance()
                     if (store.get('address')) {
-                        account = store.get('address').toLowerCase()
+                        self.account = store.get('address').toLowerCase()
                     } else {
-                        account = this.$store.state.walletLoggedIn
+                        self.account = this.$store.state.walletLoggedIn
                             ? this.$store.state.walletLoggedIn : await self.getAccount()
                     }
-                    if (account && contract) {
+                    if (self.account && contract) {
                         self.isTomonet = true
                     }
                 } catch (error) {}
             }, 0)
+        },
+        signOut () {
+            store.clearAll()
+            this.$store.state.walletLoggedIn = null
+
+            this.$router.go({
+                path: '/'
+            })
         }
     }
 }

@@ -115,7 +115,8 @@ export default {
             qrCode: 'text',
             processing: true,
             id: '',
-            provider: this.Networkprovider || store.get('network') || null
+            provider: this.Networkprovider || store.get('network') || null,
+            gasPrice: null
         }
     },
     computed: { },
@@ -145,13 +146,13 @@ export default {
         if (!self.coinbase) {
             self.$router.push({ path: '/' })
         } else {
+            self.gasPrice = await self.web3.eth.getGasPrice()
             let amount = new BigNumber(self.capacity.replace(/,/g, '')).toString(10)
             const data = {
                 action: 'withdraw',
                 amount,
-                block: self.blockNumber,
-                index: self.index,
-                voter: self.coinbase
+                voter: self.coinbase,
+                candidate: 'no-candidate'
             }
             // call api to generate qr code
             const generatedMess = await axios.post(`/api/voters/generateQR`, data)
@@ -182,7 +183,7 @@ export default {
                 console.log('==>', blockNumber, index)
                 let txParams = {
                     from: account,
-                    gasPrice: self.web3.utils.toHex(self.chainConfig.gasPrice),
+                    gasPrice: self.web3.utils.toHex(self.gasPrice),
                     gas: self.web3.utils.toHex(self.chainConfig.gas),
                     gasLimit: self.web3.utils.toHex(self.chainConfig.gas),
                     chainId: self.chainConfig.networkId

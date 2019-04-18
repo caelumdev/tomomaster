@@ -36,26 +36,58 @@
                             v-if="$v.hardware.$dirty && (!$v.hardware.minLength || !$v.hardware.maxLength)"
                             class="text-danger">Hardware must be 3 - 30 chars long</span>
                     </b-form-group>
-                    <b-form-group
-                        label="Data Center Name"
-                        label-for="dcName-value">
-                        <b-form-input
-                            v-model="dcName"
-                            name="dcName-value"/>
-                        <span
-                            v-if="$v.dcName.$dirty && (!$v.dcName.minLength || !$v.dcName.maxLength)"
-                            class="text-danger">Data Center Name must be 2 - 30 chars long</span>
-                    </b-form-group>
-                    <b-form-group
-                        label="Data Center Location"
-                        label-for="dcLocation-value">
-                        <b-form-input
-                            v-model="dcLocation"
-                            name="dcLocation-value"/>
-                        <span
-                            v-if="$v.dcLocation.$dirty && (!$v.dcLocation.minLength || !$v.dcLocation.maxLength)"
-                            class="text-danger">Data Canter Location must be 2 - 30 chars long</span>
-                    </b-form-group>
+                    <div class="row">
+                        <b-form-group
+                            class="col-md-6"
+                            label="Data Center Name"
+                            label-for="dcName-value">
+                            <b-form-input
+                                v-model="dcName"
+                                name="dcName-value"/>
+                            <span
+                                v-if="$v.dcName.$dirty && (!$v.dcName.minLength || !$v.dcName.maxLength)"
+                                class="text-danger">Data Center Name must be 2 - 30 chars long</span>
+                        </b-form-group>
+                        <b-form-group
+                            class="col-md-6"
+                            label="Data Center Location"
+                            label-for="dcLocation-value">
+                            <b-form-input
+                                v-model="dcLocation"
+                                name="dcLocation-value"/>
+                            <span
+                                v-if="$v.dcLocation.$dirty && (!$v.dcLocation.minLength || !$v.dcLocation.maxLength)"
+                                class="text-danger">Data Canter Location must be 2 - 30 chars long</span>
+                        </b-form-group>
+                    </div>
+                    <div class="row">
+                        <b-form-group
+                            class="col-md-6"
+                            label="Website"
+                            label-for="website-value">
+                            <b-form-input
+                                v-model="website"
+                                name="website-value"
+                                placeholder="https://example.com"/>
+                            <span
+                                v-if="$v.website.$dirty && !$v.website.url"
+                                class="text-danger">Not a url</span>
+
+                        </b-form-group>
+                        <b-form-group
+                            class="col-md-6"
+                            label="Telegram"
+                            label-for="telegram-value">
+                            <b-form-input
+                                v-model="telegram"
+                                name="telegram-value"
+                                placeholder="https://t.me/example"/>
+                            <span
+                                v-if="$v.telegram.$dirty && !$v.telegram.url"
+                                class="text-danger">Not a url</span>
+
+                        </b-form-group>
+                    </div>
                     <div class="buttons text-right">
                         <b-button
                             type="button"
@@ -89,7 +121,7 @@
                                     type="text"
                                     readonly
                                     cols="100"
-                                    rows="4"
+                                    rows="6"
                                     style="width: 100%"/>
                             </div>
                         </div>
@@ -135,7 +167,8 @@ import { validationMixin } from 'vuelidate'
 import {
     required,
     minLength,
-    maxLength
+    maxLength,
+    url
 } from 'vuelidate/lib/validators'
 import axios from 'axios'
 import VueQrcode from '@chenfengyuan/vue-qrcode'
@@ -163,7 +196,9 @@ export default {
             signHashError: '',
             id: '',
             interval: null,
-            account: ''
+            account: '',
+            website: '',
+            telegram: ''
         }
     },
     validations: {
@@ -183,7 +218,9 @@ export default {
         dcLocation: {
             maxLength: maxLength(30),
             minLength: minLength(2)
-        }
+        },
+        website: { url },
+        telegram: { url }
     },
     beforeDestroy () {
         if (this.interval) {
@@ -212,10 +249,12 @@ export default {
                         self.$router.push({ path: '/setting' })
                     }, 1000)
                 } else {
-                    self.name = data.name ? data.name : 'Anonymous Candidate'
+                    self.name = data.name ? data.name : 'Anonymous'
                     self.hardware = data.hardware || 'N/A'
                     self.dcName = (data.dataCenter || {}).name || 'N/A'
                     self.dcLocation = (data.dataCenter || {}).location || 'N/A'
+                    self.website = (data.socials || {}).website || ''
+                    self.telegram = (data.socials || {}).telegram || ''
                 }
             }
         } catch (e) {
@@ -280,7 +319,9 @@ export default {
             self.candidateNewInfor = 'Name: ' + self.name +
                 '\nHardware: ' + self.hardware +
             '\nData Center Name: ' + self.dcName +
-            '\nData Center Location: ' + self.dcLocation
+            '\nData Center Location: ' + self.dcLocation +
+            '\nWebsite: ' + self.website +
+            '\nTelegram: ' + self.telegram
             if (self.provider !== 'custom') {
                 const { data } = await axios.post(
                     '/api/candidates/' + self.address + '/generateMessage',
@@ -327,6 +368,9 @@ export default {
                 if (self.dcLocation !== '') {
                     body.dcLocation = self.dcLocation
                 }
+
+                body.website = self.website
+                body.telegram = self.telegram
 
                 const { data } = await axios.put(
                     '/api/candidates/update',
